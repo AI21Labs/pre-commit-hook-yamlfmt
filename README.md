@@ -7,6 +7,12 @@ optionally aligns top-level colons.<br/>
 It uses [ruamel.yaml](https://yaml.readthedocs.io/en/latest/)
 to do the heavy lifting and preserve comments within YAML files.
 
+:office: This is AI21's fork of
+[jumanjihouse/pre-commit-hook-yamlfmt](https://github.com/jumanjihouse/pre-commit-hook-yamlfmt).
+It adds [`--max-flow-width`](#keep-long-lists-readable), which rewrites
+over-long `[a, b, c]` lists as block sequences.
+Every other option behaves exactly as upstream.
+
 <!--TOC-->
 
 - [How-to](#how-to)
@@ -14,6 +20,7 @@ to do the heavy lifting and preserve comments within YAML files.
     - [Use defaults](#use-defaults)
     - [Combine with `yamllint`](#combine-with-yamllint)
     - [Override defaults](#override-defaults)
+    - [Keep long lists readable](#keep-long-lists-readable)
   - [Invoke pre-commit](#invoke-pre-commit)
     - [On every commit](#on-every-commit)
     - [On demand](#on-demand)
@@ -46,6 +53,7 @@ The default settings are:
 - `offset`: 4 spaces
 - `colons`: do _not_ align top-level colons
 - `width`: None (use ruamel default)
+- `max-flow-width`: 0 (do _not_ rewrite flow sequences)
 
 Given this input:
 
@@ -89,6 +97,55 @@ Add to `.pre-commit-config.yaml` in your git repo:
       hooks:
           - id: yamlfmt
             args: [--mapping, '2', --sequence, '2', --offset, '0', --colons, --width, '150']
+
+
+#### Keep long lists readable
+
+`ruamel.yaml` preserves flow style (`[a, b, c]`) but re-flows it onto a single
+line, so a hand-wrapped list collapses as soon as the hook runs:
+
+    # Written like this...
+    annotations: [
+      argocd.argoproj.io/tracking-id,
+      cloud.google.com/neg-status,
+      external-dns.alpha.kubernetes.io,
+    ]
+
+    # ...and reformatted to this.
+    annotations: [argocd.argoproj.io/tracking-id, cloud.google.com/neg-status, external-dns.alpha.kubernetes.io]
+
+Lowering `--width` does not help: it wraps on column boundaries rather than on
+list items, and it re-wraps every other long line in the file. Block sequences
+round-trip unchanged at any width, so they are the only stable way to keep a
+long list readable.
+
+`--max-flow-width` rewrites any flow sequence whose rendered line would be
+wider than the given number of columns:
+
+    - repo: https://github.com/AI21Labs/pre-commit-hook-yamlfmt
+      rev: 0.3.0-ai21.1  # or other specific tag
+      hooks:
+          - id: yamlfmt
+            args: [--mapping, '2', --sequence, '2', --offset, '0', --width, '4096', --max-flow-width, '120']
+
+The example above turns the collapsed line into:
+
+    annotations:
+    - argocd.argoproj.io/tracking-id
+    - cloud.google.com/neg-status
+    - external-dns.alpha.kubernetes.io
+
+Notes:
+
+- The default is `0`, which disables the rewrite. Without the flag this fork
+  produces byte-identical output to upstream.
+- The limit is measured against the whole rendered line, so indentation and the
+  key both count towards it. Lists that already fit are left in flow style.
+- A sequence is only rewritten when every item is a scalar and none is `null`.
+  Nested collections cannot be rewritten (block style is illegal inside flow
+  style), and `null` renders as an empty scalar in block style.
+- Sequences you deliberately keep on one line stay that way as long as they fit
+  under the limit; there is no per-list opt-out.
 
 
 ### Invoke pre-commit
